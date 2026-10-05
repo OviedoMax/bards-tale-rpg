@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Bard's Tale RPG Engine - All-In-One Edition</title>
+    <style>
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+        body {
+            background: #050505; color: #00ff66; font-family: monospace;
+            margin: 0; padding: 10px; display: flex; flex-direction: column; align-items: center;
+        }
+        h2 { margin: 5px 0; font-size: 1.2rem; text-align: center; color: #00ff66; }
+        
+        #game-container {
+            display: flex; flex-direction: column; align-items: center;
+            border: 2px solid #00ff66; background: #000; padding: 10px; width: 100%; max-width: 480px;
+            position: relative;
+        }
+
+        #viewport {
+            width: 100%; height: auto; max-width: 320px;
+            border: 2px solid #00ff66; background: #000; image-rendering: pixelated;
+            touch-action: none;
+        }
+
+        #hud { width: 100%; margin-top: 8px; font-size: 0.85rem; }
+        .hud-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .party-member { border-bottom: 1px dashed #005522; padding: 3px 0; }
+        
+        #log {
+            width: 100%; height: 55px; border: 1px solid #00ff66; margin-top: 8px;
+            padding: 5px; color: #ffff55; font-size: 0.8rem; overflow-y: auto; background: #050505;
+        }
+
+        #dpad-container {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+            width: 100%; max-width: 280px; margin-top: 10px;
+        }
+        .btn {
+            background: #111; color: #00ff66; border: 1px solid #00ff66;
+            padding: 10px 0; font-family: monospace; font-size: 0.9rem; font-weight: bold;
+            text-align: center; border-radius: 4px; cursor: pointer;
+        }
+        .btn:active { background: #00ff66; color: #000; }
+        .btn-magic { background: #110022; border-color: #bb66ff; color: #bb66ff; grid-column: span 3; }
+        .btn-song { background: #002211; border-color: #00ff66; color: #00ff66; grid-column: span 3; }
+        .btn-system { background: #112200; border-color: #aaff00; color: #aaff00; }
+
+        #spell-modal {
+            display: none; position: absolute; top: 10px; left: 10px; right: 10px; bottom: 10px;
+            background: rgba(5, 5, 5, 0.95); border: 2px solid #bb66ff; padding: 12px;
+            flex-direction: column; z-index: 100; color: #bb66ff; font-size: 0.85rem;
+        }
+        #spell-modal select, #spell-modal button {
+            background: #110022; color: #bb66ff; border: 1px solid #bb66ff;
+            padding: 8px; font-family: monospace; font-size: 0.85rem; margin-top: 6px; width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>SKARA BRAE CRAWLER</h2>
+
+    <div id="game-container">
+        <canvas id="viewport" width="320" height="240"></canvas>
+
+        <div id="hud">
+            <div class="hud-row">
+                <span><strong>LEVEL:</strong> <span id="lvl">1</span></span>
+                <span><strong>POS:</strong> <span id="pos">(1,1)</span></span>
+                <span><strong>FACING:</strong> <span id="facing">EAST</span></span>
+            </div>
+            <div class="hud-row">
+                <span><strong>GOLD:</strong> <span id="gold">100</span></span>
+                <span><strong>SONG:</strong> <span id="song">OFF</span></span>
+            </div>
+            <hr style="border-color:#00ff66; margin: 4px 0;">
+            <strong>PARTY ROSTER:</strong>
+            <div id="party-list"></div>
+        </div>
+
+        <div id="log">Single-file engine loaded! Use touch buttons or WASD to explore.</div>
+
+        <div id="dpad-container">
+            <div></div>
+            <div class="btn" onclick="handleMove(true)">▲ FW</div>
+            <div></div>
+
+            <div class="btn" onclick="handleTurn(false)">◄ L</div>
+            <div class="btn" onclick="handleMove(false)">▼ BK</div>
+            <div class="btn" onclick="handleTurn(true)">► R</div>
+
+            <div class="btn btn-magic" onclick="openSpellMenu()">[C] CAST SPELL MENU</div>
+            <div class="btn btn-song" onclick="handleSong()">[B] BARD SONG (+2 AC)</div>
+            <div class="btn btn-system" onclick="handleSave()">[S] SAVE</div>
+            <div></div>
+            <div class="btn btn-system" onclick="handleLoad()">[L] LOAD</div>
+        </div>
+
+        <div id="spell-modal">
+            <h3 style="margin: 0 0 8px 0; text-align: center; border-bottom: 1px solid #bb66ff; padding-bottom: 4px;">SPELLCASTING GRIMOIRE</h3>
+            
+            <label>1. Select Caster:</label>
+            <select id="spell-caster" onchange="updateSpellOptions()"></select>
+
+            <label style="margin-top: 8px; display:block;">2. Choose Incantation:</label>
+            <select id="spell-select" onchange="updateTargetOptions()"></select>
+
+            <label style="margin-top: 8px; display:block;">3. Target Selection:</label>
+            <select id="spell-target"></select>
+
+            <div style="display: flex; gap: 8px; margin-top: 15px;">
+                <button onclick="executeCast()" style="background: #bb66ff; color: #000; font-weight: bold;">CAST</button>
+                <button onclick="closeSpellMenu()" style="background: #330044; color: #ff6666; border-color: #ff6666;">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const GAME_DATA = {
+            classes: {
+                Warrior: { name: "Warrior", hpDice: 10, spDice: 0, baseAc: 10, canCast: false },
+                Paladin: { name: "Paladin", hpDice: 8, spDice: 0, baseAc: 10, canCast: false },
+                Bard: { name: "Bard", hpDice: 7, spDice: 4, baseAc: 10, canCast: false, canSing: true },
+                Rogue: { name: "Rogue", hpDice: 6, spDice: 0, baseAc: 10, canCast: false, canDisarm: true },
+                Magician: { name: "Magician", hpDice: 4, spDice: 8, baseAc: 10, canCast: true },
+                Sorcerer: { name: "Sorcerer", hpDice: 5, spDice: 10, baseAc: 10, canCast: true }
+            },
+            spells: [
+                { code: "MAFL", name: "Mage Flame", discipline: "Magician", level: 1, spCost: 2, targetType: "UTILITY", effect: "LIGHT", value: 4, desc: "Illuminates corridors." },
+                { code: "ARFI", name: "Arc Fire", discipline: "Magician", level: 1, spCost: 3, targetType: "ENEMY", effect: "DAMAGE", valueDice: "1d4+2", desc: "Fire blast on single target." },
+                { code: "REST", name: "Flesh Restore", discipline: "Sorcerer", level: 1, spCost: 6, targetType: "PARTY_MEMBER", effect: "HEAL", valueDice: "2d8+4", desc: "Heals single ally." },
+                { code: "VORP", name: "Vorpal Plating", discipline: "Magician", level: 1, spCost: 3, targetType: "PARTY_ALL", effect: "BUFF_AC", value: -2, desc: "+2 Party AC in combat." }
+            ],
+            monsters: [
+                { id: "mon_skeleton", name: "Skeleton", hpDice: "2d6+4", ac: 12, xpReward: 30 },
+                { id: "mon_orc_warrior", name: "Orc Guard", hpDice: "3d6+6", ac: 14, xpReward: 65 }
+            ]
+        };
+
+        class SoundFX {
+            constructor() { this.ctx = null; }
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            playSwordSlash() {
+                this.init();
+                const bufferSize = this.ctx.sampleRate * 0.12;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = "lowpass";
+                filter.frequency.setValueAtTime(1000, this.ctx.currentTime);
+                filter.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.12);
+
+                const gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.12);
+
+                noise.connect(filter); filter.connect(gain); gain.connect(this.ctx.destination);
+                noise.start();
+            }
+
+            playMagicSpell() {
+                this.init();
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                const now = this.ctx.currentTime;
+                osc.frequency.setValueAtTime(200, now);
+                osc.frequency.exponentialRampToValueAtTime(1200, now + 0.3);
+
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(now); osc.stop(now + 0.3);
+            }
+
+            playBardSong() {
+                this.init();
+                const notes = [523.25, 659.25, 783.99];
+                const now = this.ctx.currentTime;
+                notes.forEach((freq, idx) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(freq, now + idx * 0.12);
+                    gain.gain.setValueAtTime(0.3, now + idx * 0.12);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.12 + 0.25);
+                    osc.connect(gain); gain.connect(this.ctx.destination);
+                    osc.start(now + idx * 0.12); osc.stop(now + idx * 0.12 + 0.25);
+                });
+            }
+
+            playTreasureChime() {
+                this.init();
+                const now = this.ctx.currentTime;
+                const notes = [987.77, 1318.51];
+                notes.forEach((freq, idx) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+                    gain.gain.setValueAtTime(0.2, now + idx * 0.08);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.08 + 0.2);
+                    osc.connect(gain); gain.connect(this.ctx.destination);
+                    osc.start(now + idx * 0.08); osc.stop(now + idx * 0.08 + 0.2);
+                });
+            }
+        }
+
+        const soundEngine = new SoundFX();
+
+        class GameEngine {
+            constructor() {
+                this.data = GAME_DATA;
+                this.currentState = 'EXPLORATION'; 
+                this.currentLevel = 1;
+                this.dungeons = {
+                    1: {
+                        name: "Cellar Level 1",
+                        map: [
+                            [1, 1, 1, 1, 1, 1, 1, 1],
+                            [1, 0, 2, 0, 1, 3, 0, 1],
+                            [1, 0, 1, 0, 1, 0, 1, 1],
+                            [1, 3, 1, 0, 0, 0, 4, 1],
+                            [1, 0, 0, 0, 1, 1, 0, 1],
+                            [1, 1, 1, 0, 0, 0, 3, 1],
+                            [1, 2, 0, 3, 1, 0, 2, 1],
+                            [1, 1, 1, 1, 1, 1, 1, 1]
+                        ],
+                        stairsDownLanding: { x: 6.5, y: 3.5 },
+                        visited: Array.from({ length: 8 }, () => Array(8).fill(false))
+                    },
+                    2: {
+                        name: "Catacombs Level 2",
+                        map: [
+                            [1, 1, 1, 1, 1, 1, 1, 1],
+                            [1, 3, 0, 0, 0, 0, 2, 1],
+                            [1, 0, 1, 1, 1, 0, 1, 1],
+                            [1, 0, 1, 5, 1, 0, 4, 1],
+                            [1, 0, 1, 0, 1, 0, 1, 1],
+                            [1, 2, 0, 0, 0, 0, 3, 1],
+                            [1, 1, 1, 1, 1, 3, 2, 1],
+                            [1, 1, 1, 1, 1, 1, 1, 1]
+                        ],
+                        stairsUpLanding: { x: 3.5, y: 3.5 },
+                        stairsDownLanding: { x: 6.5, y: 3.5 },
+                        visited: Array.from({ length: 8 }, () => Array(8).fill(false))
+                    }
+                };
+
+                this.player = { x: 1.5, y: 1.5, angle: 0 };
+                this.gameState = { gold: 100, activeSong: false, party: [] };
+                
+                this.markVisited();
+                this.initDefaultParty();
+            }
+
+            get activeMap() { return this.dungeons[this.currentLevel].map; }
+            get activeVisited() { return this.dungeons[this.currentLevel].visited; }
+
+            markVisited() {
+                const px = Math.floor(this.player.x);
+                const py = Math.floor(this.player.y);
+                if (px >= 0 && px < 8 && py >= 0 && py < 8) {
+                    this.activeVisited[py][px] = true;
+                }
+            }
+
+            initDefaultParty() {
+                this.gameState.party = [
+                    this.createCharacter("Elric", "Warrior"),
+                    this.createCharacter("Bran", "Bard"),
+                    this.createCharacter("Morgana", "Magician"),
+                    this.createCharacter("Thorne", "Sorcerer")
+                ];
+            }
+
+            createCharacter(name, className) {
+                const classDef = this.data.classes[className] || this.data.classes.Warrior;
+                const maxHp = classDef.hpDice + 10;
+                const maxSp = classDef.spDice * 2;
+                return {
+                    id: 'char_' + Math.random().toString(36).substr(2, 9),
+                    name: name, className: className, canCast: classDef.canCast,
+                    level: 1, hpCur: maxHp, hpMax: maxHp, spCur: maxSp, spMax: maxSp,
+                    baseAc: classDef.baseAc
+                };
+            }
+
+            rollDice(diceStr) {
+                if (!diceStr) return 0;
+                const match = diceStr.match(/^(\d+)d(\d+)(?:([+-])(\d+))?$/);
+                if (!match) return parseInt(diceStr, 10) || 0;
+                const count = parseInt(match[1], 10), sides = parseInt(match[2], 10);
+                let total = 0;
+                for (let i = 0; i < count; i++) total += Math.floor(Math.random() * sides) + 1;
+                if (match[3] === '+') total += parseInt(match[4], 10);
+                if (match[3] === '-') total -= parseInt(match[4], 10);
+                return Math.max(1, total);
+            }
+
+            move(forward = true) {
+                const dir = forward ? 1 : -1;
+                const stepX = Math.round(Math.cos(this.player.angle)) * dir;
+                const stepY = Math.round(Math.sin(this.player.angle)) * dir;
+                const nx = Math.floor(this.player.x) + stepX;
+                const ny = Math.floor(this.player.y) + stepY;
+
+                if (this.activeMap[ny][nx] === 1) return "Ouch! Bumped into a solid stone wall.";
+                this.player.x = nx + 0.5; this.player.y = ny + 0.5;
+                
+                this.markVisited();
+                return this.triggerTileEvent(nx, ny);
+            }
+
+            turn(right = true) {
+                this.player.angle += right ? Math.PI / 2 : -Math.PI / 2;
+                if (this.player.angle < 0) this.player.angle += Math.PI * 2;
+                if (this.player.angle >= Math.PI * 2) this.player.angle -= Math.PI * 2;
+            }
+
+            triggerTileEvent(x, y) {
+                const tileType = this.activeMap[y][x];
+
+                if (tileType === 2) {
+                    this.activeMap[y][x] = 0;
+                    const gold = this.rollDice("5d20+50") * this.currentLevel;
+                    this.gameState.gold += gold;
+                    soundEngine.playTreasureChime();
+                    return `[CHEST] Found a chest on L${this.currentLevel}! +${gold} Gold.`;
+                } else if (tileType === 3) {
+                    this.activeMap[y][x] = 0;
+                    soundEngine.playSwordSlash();
+                    return `[ENCOUNTER!] Level ${this.currentLevel} monsters attack!`;
+                } else if (tileType === 4) {
+                    this.currentLevel++;
+                    const newDungeon = this.dungeons[this.currentLevel];
+                    if (newDungeon && newDungeon.stairsUpLanding) {
+                        this.player.x = newDungeon.stairsUpLanding.x;
+                        this.player.y = newDungeon.stairsUpLanding.y;
+                    }
+                    this.markVisited();
+                    return `[STAIRS] You descend the stairwell to ${newDungeon.name}!`;
+                } else if (tileType === 5) {
+                    this.currentLevel--;
+                    const newDungeon = this.dungeons[this.currentLevel];
+                    if (newDungeon && newDungeon.stairsDownLanding) {
+                        this.player.x = newDungeon.stairsDownLanding.x;
+                        this.player.y = newDungeon.stairsDownLanding.y;
+                    }
+                    this.markVisited();
+                    return `[STAIRS] You climb the stairwell up to ${newDungeon.name}!`;
+                }
+
+                return `Level ${this.currentLevel} - Tile (${x}, ${y}).`;
+            }
+
+            singBardSong() {
+                const bard = this.gameState.party.find(p => p.className === 'Bard');
+                if (!bard || bard.spCur < 3) return "Bard doesn't have enough SP!";
+                if (this.gameState.activeSong) return "Falkentyne's Fury is already active!";
+                
+                bard.spCur -= 3;
+                this.gameState.activeSong = true;
+                soundEngine.playBardSong();
+                return "Bard plays Falkentyne's Fury! Party AC +2.";
+            }
+
+            castSpell(casterName, spellCode, targetIndex) {
+                const caster = this.gameState.party.find(p => p.name === casterName);
+                const spell = this.data.spells.find(s => s.code === spellCode);
+
+                if (!caster || !spell) return "Invalid selection.";
+                if (caster.spCur < spell.spCost) return `${caster.name} needs ${spell.spCost} SP!`;
+
+                caster.spCur -= spell.spCost;
+                soundEngine.playMagicSpell();
+
+                if (spell.effect === "HEAL") {
+                    const target = this.gameState.party[targetIndex] || caster;
+                    const healAmt = this.rollDice(spell.valueDice);
+                    target.hpCur = Math.min(target.hpMax, target.hpCur + healAmt);
+                    return `[MAGIC] ${caster.name} casts ${spell.name}! Healed ${target.name} for +${healAmt} HP.`;
+                } 
+                else if (spell.effect === "DAMAGE") {
+                    const dmgAmt = this.rollDice(spell.valueDice);
+                    return `[MAGIC] ${caster.name} casts ${spell.name}! Strikes target for ${dmgAmt} fire damage.`;
+                }
+
+                return `[MAGIC] ${caster.name} casts ${spell.name}.`;
+            }
+
+            saveGame() {
+                const saveObj = {
+                    currentLevel: this.currentLevel,
+                    player: this.player,
+                    gameState: this.gameState,
+                    dungeons: this.dungeons
+                };
+                localStorage.setItem('bards_tale_save', JSON.stringify(saveObj));
+                return "Game state and dungeon maps saved!";
+            }
+
+            loadGame() {
+                const raw = localStorage.getItem('bards_tale_save');
+                if (!raw) return "No saved game found!";
+                const saveObj = JSON.parse(raw);
+                this.currentLevel = saveObj.currentLevel;
+                this.player = saveObj.player;
+                this.gameState = saveObj.gameState;
+                this.dungeons = saveObj.dungeons;
+                return "Game loaded successfully!";
+            }
+        }
+
+        const engine = new GameEngine();
+
+        const canvas = document.getElementById('viewport');
+        const ctx = canvas.getContext('2d');
+        const FOV = Math.PI / 3;
+        const HALF_FOV = FOV / 2;
+        const NUM_RAYS = canvas.width;
+        const MAX_DEPTH = 8;
+
+        function renderRaycaster() {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height / 2);
+            ctx.fillStyle = '#151515';
+            ctx.fillRect(0, canvas.height / 2, canvas.width, canvas.height / 2);
+
+            for (let ray = 0; ray < NUM_RAYS; ray++) {
+                const rayAngle = (engine.player.angle - HALF_FOV) + (ray / NUM_RAYS) * FOV;
+                let distanceToWall = 0;
+                let hitWall = false;
+
+                const sin = Math.sin(rayAngle);
+                const cos = Math.cos(rayAngle);
+
+                while (!hitWall && distanceToWall < MAX_DEPTH) {
+                    distanceToWall += 0.02;
+                    const checkX = Math.floor(engine.player.x + cos * distanceToWall);
+                    const checkY = Math.floor(engine.player.y + sin * distanceToWall);
+
+                    if (checkX < 0 || checkX >= 8 || checkY < 0 || checkY >= 8) {
+                        hitWall = true;
+                        distanceToWall = MAX_DEPTH;
+                    } else if (engine.activeMap[checkY][checkX] === 1) {
+                        hitWall = true;
+                    }
+                }
+
+                const correctedDist = distanceToWall * Math.cos(rayAngle - engine.player.angle);
+                const wallHeight = Math.min(canvas.height, (canvas.height / correctedDist));
+                const shade = Math.max(0, 255 - Math.floor(correctedDist * 32));
+                ctx.fillStyle = `rgb(0, ${shade}, ${Math.floor(shade * 0.3)})`;
+
+                const wallTop = (canvas.height / 2) - (wallHeight / 2);
+                ctx.fillRect(ray, wallTop, 1, wallHeight);
+            }
+
+            renderMiniMap();
+        }
+
+        function renderMiniMap() {
+            const tileSize = 8;
+            const mapPixelSize = 8 * tileSize;
+            const offsetX = canvas.width - mapPixelSize - 8;
+            const offsetY = 8;
+
+            ctx.fillStyle = 'rgba(0, 20, 10, 0.85)';
+            ctx.fillRect(offsetX - 2, offsetY - 2, mapPixelSize + 4, mapPixelSize + 4);
+            ctx.strokeStyle = '#00ff66';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(offsetX - 2, offsetY - 2, mapPixelSize + 4, mapPixelSize + 4);
+
+            for (let y = 0; y < 8; y++) {
+                for (let x = 0; x < 8; x++) {
+                    const tx = offsetX + x * tileSize;
+                    const ty = offsetY + y * tileSize;
+
+                    if (!engine.activeVisited[y][x]) {
+                        ctx.fillStyle = '#05110a';
+                        ctx.fillRect(tx, ty, tileSize, tileSize);
+                    } else {
+                        const tile = engine.activeMap[y][x];
+                        if (tile === 1) ctx.fillStyle = '#00aa44';
+                        else if (tile === 2) ctx.fillStyle = '#ffff00';
+                        else if (tile === 3) ctx.fillStyle = '#ff3333';
+                        else if (tile === 4) ctx.fillStyle = '#33ffff';
+                        else if (tile === 5) ctx.fillStyle = '#ff8800';
+                        else ctx.fillStyle = '#003311';
+                        ctx.fillRect(tx, ty, tileSize - 1, tileSize - 1);
+                    }
+                }
+            }
+
+            const px = offsetX + engine.player.x * tileSize;
+            const py = offsetY + engine.player.y * tileSize;
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            const dirX = px + Math.cos(engine.player.angle) * 6;
+            const dirY = py + Math.sin(engine.player.angle) * 6;
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(px, py);
+            ctx.lineTo(dirX, dirY);
+            ctx.stroke();
+        }
+
+        function openSpellMenu() {
+            const casterSelect = document.getElementById('spell-caster');
+            casterSelect.innerHTML = '';
+            
+            engine.gameState.party.forEach(p => {
+                if (p.canCast) {
+                    casterSelect.innerHTML += `<option value="${p.name}">${p.name} (${p.className}) - ${p.spCur}/${p.spMax} SP</option>`;
+                }
+            });
+
+            if (casterSelect.options.length === 0) {
+                logMsg("No spellcasters alive in party!");
+                return;
+            }
+
+            document.getElementById('spell-modal').style.display = 'flex';
+            updateSpellOptions();
+        }
+
+        function closeSpellMenu() {
+            document.getElementById('spell-modal').style.display = 'none';
+        }
+
+        function updateSpellOptions() {
+            const spellSelect = document.getElementById('spell-select');
+            spellSelect.innerHTML = '';
+
+            GAME_DATA.spells.forEach(s => {
+                spellSelect.innerHTML += `<option value="${s.code}">[${s.code}] ${s.name} (${s.spCost} SP) - ${s.desc}</option>`;
+            });
+
+            updateTargetOptions();
+        }
+
+        function updateTargetOptions() {
+            const spellCode = document.getElementById('spell-select').value;
+            const spell = GAME_DATA.spells.find(s => s.code === spellCode);
+            const targetSelect = document.getElementById('spell-target');
+            targetSelect.innerHTML = '';
+
+            if (spell.targetType === "PARTY_MEMBER") {
+                engine.gameState.party.forEach((p, idx) => {
+                    targetSelect.innerHTML += `<option value="${idx}">${p.name} (HP: ${p.hpCur}/${p.hpMax})</option>`;
+                });
+            } else if (spell.targetType === "ENEMY") {
+                targetSelect.innerHTML = `<option value="0">Nearest Enemy Target</option>`;
+            } else {
+                targetSelect.innerHTML = `<option value="-1">Entire Party / Environment</option>`;
+            }
+        }
+
+        function executeCast() {
+            const casterName = document.getElementById('spell-caster').value;
+            const spellCode = document.getElementById('spell-select').value;
+            const targetIdx = parseInt(document.getElementById('spell-target').value, 10);
+
+            const resultMsg = engine.castSpell(casterName, spellCode, targetIdx);
+            logMsg(resultMsg);
+
+            closeSpellMenu();
+            updateUI();
+        }
+
+        function logMsg(msg) {
+            document.getElementById('log').innerText = msg;
+        }
+
+        function handleMove(fw) {
+            logMsg(engine.move(fw));
+            updateUI();
+        }
+
+        function handleTurn(right) {
+            engine.turn(right);
+            logMsg(`Turned ${right ? 'Right' : 'Left'}.`);
+            updateUI();
+        }
+
+        function handleSong() {
+            logMsg(engine.singBardSong());
+            updateUI();
+        }
+
+        function handleSave() { logMsg(engine.saveGame()); }
+        function handleLoad() { logMsg(engine.loadGame()); updateUI(); }
+
+        function updateUI() {
+            document.getElementById('lvl').innerText = engine.currentLevel;
+            document.getElementById('pos').innerText = `(${Math.floor(engine.player.x)}, ${Math.floor(engine.player.y)})`;
+            document.getElementById('facing').innerText = engine.player.angle === 0 ? "EAST" : engine.player.angle === Math.PI/2 ? "SOUTH" : engine.player.angle === Math.PI ? "WEST" : "NORTH";
+            document.getElementById('gold').innerText = engine.gameState.gold;
+            document.getElementById('song').innerText = engine.gameState.activeSong ? 'ACTIVE (+2 AC)' : 'OFF';
+
+            const partyList = document.getElementById('party-list');
+            partyList.innerHTML = '';
+            engine.gameState.party.forEach(p => {
+                const acBonus = engine.gameState.activeSong ? 2 : 0;
+                partyList.innerHTML += `
+                    <div class="party-member">
+                        <strong>${p.name}</strong> (${p.className}) | HP: ${p.hpCur}/${p.hpMax} | SP: ${p.spCur}/${p.spMax} | AC: ${p.baseAc - acBonus}
+                    </div>
+                `;
+            });
+
+            renderRaycaster();
+        }
+
+        window.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase();
+            if (k === 'w' || k === 'arrowup') handleMove(true);
+            if (k === 's' || k === 'arrowdown') handleMove(false);
+            if (k === 'a' || k === 'arrowleft') handleTurn(false);
+            if (k === 'd' || k === 'arrowright') handleTurn(true);
+            if (k === 'c') openSpellMenu();
+            if (k === 'b') handleSong();
+        });
+
+        updateUI();
+    </script>
+</body>
+</html>
