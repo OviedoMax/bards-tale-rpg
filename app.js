@@ -1,6 +1,10 @@
 document.addEventListener('DOMContentLoaded', () => {
     const engine = window.gameEngine;
     const ui = window.ui;
+    const renderer = window.renderer;
+
+    // Force context initialization after DOM ready
+    renderer.init();
 
     window.handleMove = (fw) => { ui.logMsg(engine.move(fw)); ui.updateUI(); };
     window.handleTurn = (right) => { engine.turn(right); ui.logMsg(`Turned ${right ? 'Right' : 'Left'}.`); ui.updateUI(); };
@@ -64,5 +68,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (k === 'b') handleSong();
     });
 
+    // Boot Engine UI & Rendering
     ui.updateUI();
 });
